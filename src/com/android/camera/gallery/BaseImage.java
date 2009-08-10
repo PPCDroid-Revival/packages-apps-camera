@@ -158,71 +158,30 @@ public abstract class BaseImage implements IImage {
         return mUri.hashCode();
     }
 
-    public Bitmap fullSizeBitmap(int targetWidthHeight) {
-        return fullSizeBitmap(targetWidthHeight, true);
+    public Bitmap fullSizeBitmap(int minSideLength, int maxNumberOfPixels) {
+        return fullSizeBitmap(minSideLength, maxNumberOfPixels,
+                IImage.ROTATE_AS_NEEDED, IImage.NO_NATIVE);
     }
 
-    protected Bitmap fullSizeBitmap(
-            int targetWidthHeight, boolean rotateAsNeeded) {
+    public Bitmap fullSizeBitmap(int minSideLength, int maxNumberOfPixels,
+            boolean rotateAsNeeded) {
+        return fullSizeBitmap(minSideLength, maxNumberOfPixels,
+                rotateAsNeeded, IImage.NO_NATIVE);
+    }
+
+    public Bitmap fullSizeBitmap(int minSideLength, int maxNumberOfPixels,
+            boolean rotateAsNeeded, boolean useNative) {
         Uri url = mContainer.contentUri(mId);
         if (url == null) return null;
 
-        Bitmap b = Util.makeBitmap(targetWidthHeight, url, mContentResolver);
+        Bitmap b = Util.makeBitmap(minSideLength, maxNumberOfPixels,
+                url, mContentResolver, useNative);
+
         if (b != null && rotateAsNeeded) {
             b = Util.rotate(b, getDegreesRotated());
         }
+
         return b;
-    }
-
-    private class LoadBitmapCancelable extends BaseCancelable<Bitmap> {
-        private final ParcelFileDescriptor mPFD;
-        private final BitmapFactory.Options mOptions =
-                new BitmapFactory.Options();
-        private final int mTargetWidthHeight;
-
-        public LoadBitmapCancelable(
-                ParcelFileDescriptor pfdInput, int targetWidthHeight) {
-            mPFD = pfdInput;
-            mTargetWidthHeight = targetWidthHeight;
-        }
-
-        @Override
-        public boolean requestCancel() {
-            if (super.requestCancel()) {
-                mOptions.requestCancelDecode();
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        protected Bitmap execute() {
-            try {
-                Bitmap b = Util.makeBitmap(mTargetWidthHeight, mUri,
-                        mContentResolver, mPFD, mOptions);
-                if (b != null) {
-                    b = Util.rotate(b, getDegreesRotated());
-                }
-                return b;
-            } catch (RuntimeException ex) {
-                return null;
-            } catch (Error e) {
-                return null;
-            }
-        }
-    }
-
-    public Cancelable<Bitmap> fullSizeBitmapCancelable(
-            int targetWidthHeight) {
-        try {
-            ParcelFileDescriptor pfdInput = mContentResolver
-                    .openFileDescriptor(mUri, "r");
-            return new LoadBitmapCancelable(pfdInput, targetWidthHeight);
-        } catch (FileNotFoundException ex) {
-            return null;
-        } catch (UnsupportedOperationException ex) {
-            return null;
-        }
     }
 
     public InputStream fullSizeImageData() {
@@ -250,7 +209,7 @@ public abstract class BaseImage implements IImage {
         return mDateTaken;
     }
 
-    protected int getDegreesRotated() {
+    public int getDegreesRotated() {
         return 0;
     }
 
@@ -297,20 +256,21 @@ public abstract class BaseImage implements IImage {
     public Bitmap miniThumbBitmap() {
         try {
             long id = mId;
-            long dbMagic = mMiniThumbMagic;
-            if (dbMagic == 0 || dbMagic == id) {
-                dbMagic = ((BaseImageList)
-                        getContainer()).checkThumbnail(this, null);
-            }
 
             synchronized (sMiniThumbData) {
-                dbMagic = mMiniThumbMagic;
-                byte [] data = mContainer.getMiniThumbFromFile(id,
-                        sMiniThumbData, dbMagic);
+                byte [] data = null;
+
+                // Try to get it from the file.
+                if (mMiniThumbMagic != 0) {
+                    data = mContainer.getMiniThumbFromFile(id, sMiniThumbData,
+                            mMiniThumbMagic);
+                }
+
+                // If it does not exist, try to create the thumbnail
                 if (data == null) {
                     byte[][] createdThumbData = new byte[1][];
                     try {
-                        dbMagic = ((BaseImageList) getContainer())
+                        ((BaseImageList) getContainer())
                                 .checkThumbnail(this, createdThumbData);
                     } catch (IOException ex) {
                         // Typically IOException because the sd card is full.
@@ -319,13 +279,11 @@ public abstract class BaseImage implements IImage {
                     }
                     data = createdThumbData[0];
                 }
+
                 if (data == null) {
-                    data = mContainer.getMiniThumbFromFile(id, sMiniThumbData,
-                            dbMagic);
+                    // Unable to get mini-thumb.
                 }
-                if (data == null) {
-                    // Unable to get mini-thumb data from file.
-                }
+
                 if (data != null) {
                     Bitmap b = BitmapFactory.decodeByteArray(data, 0,
                             data.length);

@@ -1269,7 +1269,7 @@ public class VideoCamera extends Activity implements View.OnClickListener,
 
         // Starting a minute before reaching the max duration
         // limit, we'll countdown the remaining time instead.
-        boolean countdownRemainingTime = (mMaxVideoDurationInMs != 0 
+        boolean countdownRemainingTime = (mMaxVideoDurationInMs != 0
                 && delta >= mMaxVideoDurationInMs - 60000);
 
         if (countdownRemainingTime) {
@@ -1322,10 +1322,11 @@ public class VideoCamera extends Activity implements View.OnClickListener,
         mHandler.sendEmptyMessageDelayed(UPDATE_RECORD_TIME, 1000);
     }
 
-    public void onSwitchChanged(Switcher source, boolean onOff) {
+    public boolean onSwitchChanged(Switcher source, boolean onOff) {
         if (onOff == SWITCH_CAMERA) {
             MenuHelper.gotoCameraMode(this);
             finish();
         }
+        return true;
     }
 }

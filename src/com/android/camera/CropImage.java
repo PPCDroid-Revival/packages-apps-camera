@@ -42,6 +42,7 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Toast;
 
 import java.io.File;
@@ -78,7 +79,6 @@ public class CropImage extends MonitoredActivity {
     private ContentResolver mContentResolver;
 
     private Bitmap mBitmap;
-    private Bitmap mCroppedImage;
     private final BitmapManager.ThreadSet mDecodingThreads =
             new BitmapManager.ThreadSet();
     HighlightView mCrop;
@@ -137,7 +137,7 @@ public class CropImage extends MonitoredActivity {
                 // instead.
                 // TODO when saving the resulting bitmap use the
                 // decode/crop/encode api so we don't lose any resolution.
-                mBitmap = mImage.thumbBitmap();
+                mBitmap = mImage.thumbBitmap(IImage.ROTATE_AS_NEEDED);
             }
         }
 
@@ -145,6 +145,9 @@ public class CropImage extends MonitoredActivity {
             finish();
             return;
         }
+
+        // Make UI fullscreen.
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         findViewById(R.id.discard).setOnClickListener(
                 new View.OnClickListener() {
@@ -170,9 +173,6 @@ public class CropImage extends MonitoredActivity {
         }
 
         mImageView.setImageBitmapResetBase(mBitmap, true);
-        if (mImageView.getScale() == 1F) {
-            mImageView.center(true, true);
-        }
 
         Util.startBackgroundJob(this, null,
                 getResources().getString(R.string.runningFaceDetection),
@@ -180,13 +180,15 @@ public class CropImage extends MonitoredActivity {
             public void run() {
                 final CountDownLatch latch = new CountDownLatch(1);
                 final Bitmap b = (mImage != null)
-                        ? mImage.fullSizeBitmap(500)
+                        ? mImage.fullSizeBitmap(IImage.UNCONSTRAINED,
+                        1024 * 1024)
                         : mBitmap;
                 mHandler.post(new Runnable() {
                     public void run() {
                         if (b != mBitmap && b != null) {
-                            mBitmap = b;
                             mImageView.setImageBitmapResetBase(b, true);
+                            mBitmap.recycle();
+                            mBitmap = b;
                         }
                         if (mImageView.getScale() == 1F) {
                             mImageView.center(true, true);
@@ -208,48 +210,55 @@ public class CropImage extends MonitoredActivity {
         // TODO this code needs to change to use the decode/crop/encode single
         // step api so that we don't require that the whole (possibly large)
         // bitmap doesn't have to be read into memory
+        if (mSaving) return;
+
+        if (mCrop == null) {
+            return;
+        }
+
         mSaving = true;
-        if (mCroppedImage == null) {
-            if (mCrop == null) {
-                return;
-            }
 
-            Rect r = mCrop.getCropRect();
+        Rect r = mCrop.getCropRect();
 
-            int width = r.width();
-            int height = r.height();
+        int width = r.width();
+        int height = r.height();
 
-            // If we are circle cropping, we want alpha channel, which is the
-            // third param here.
-            mCroppedImage = Bitmap.createBitmap(width, height,
-                    mCircleCrop
-                    ? Bitmap.Config.ARGB_8888
-                    : Bitmap.Config.RGB_565);
-            Canvas canvas = new Canvas(mCroppedImage);
+        // If we are circle cropping, we want alpha channel, which is the
+        // third param here.
+        Bitmap croppedImage = Bitmap.createBitmap(width, height,
+                mCircleCrop
+                ? Bitmap.Config.ARGB_8888
+                : Bitmap.Config.RGB_565);
+        {
+            Canvas canvas = new Canvas(croppedImage);
             Rect dstRect = new Rect(0, 0, width, height);
             canvas.drawBitmap(mBitmap, r, dstRect, null);
+        }
 
-            if (mCircleCrop) {
-                // OK, so what's all this about?
-                // Bitmaps are inherently rectangular but we want to return
-                // something that's basically a circle.  So we fill in the
-                // area around the circle with alpha.  Note the all important
-                // PortDuff.Mode.CLEAR.
-                Canvas c = new Canvas(mCroppedImage);
-                Path p = new Path();
-                p.addCircle(width / 2F, height / 2F, width / 2F,
-                        Path.Direction.CW);
-                c.clipPath(p, Region.Op.DIFFERENCE);
-                c.drawColor(0x00000000, PorterDuff.Mode.CLEAR);
-            }
+        if (mCircleCrop) {
+            // OK, so what's all this about?
+            // Bitmaps are inherently rectangular but we want to return
+            // something that's basically a circle.  So we fill in the
+            // area around the circle with alpha.  Note the all important
+            // PortDuff.Mode.CLEAR.
+            Canvas c = new Canvas(croppedImage);
+            Path p = new Path();
+            p.addCircle(width / 2F, height / 2F, width / 2F,
+                    Path.Direction.CW);
+            c.clipPath(p, Region.Op.DIFFERENCE);
+            c.drawColor(0x00000000, PorterDuff.Mode.CLEAR);
         }
 
         /* If the output is required to a specific size then scale or fill */
         if (mOutputX != 0 && mOutputY != 0) {
             if (mScale) {
                 /* Scale the image to the required dimensions */
-                mCroppedImage = Util.transform(new Matrix(),
-                        mCroppedImage, mOutputX, mOutputY, mScaleUp);
+                Bitmap old = croppedImage;
+                croppedImage = Util.transform(new Matrix(),
+                        croppedImage, mOutputX, mOutputY, mScaleUp);
+                if (old != croppedImage) {
+                    old.recycle();
+                }
             } else {
 
                 /* Don't scale the image crop it to the size requested.
@@ -279,7 +288,8 @@ public class CropImage extends MonitoredActivity {
                 canvas.drawBitmap(mBitmap, srcRect, dstRect, null);
 
                 /* Set the cropped bitmap as the new bitmap */
-                mCroppedImage = b;
+                croppedImage.recycle();
+                croppedImage = b;
             }
         }
 
@@ -288,28 +298,29 @@ public class CropImage extends MonitoredActivity {
         if (myExtras != null && (myExtras.getParcelable("data") != null
                 || myExtras.getBoolean("return-data"))) {
             Bundle extras = new Bundle();
-            extras.putParcelable("data", mCroppedImage);
+            extras.putParcelable("data", croppedImage);
             setResult(RESULT_OK,
                     (new Intent()).setAction("inline-data").putExtras(extras));
             finish();
         } else {
+            final Bitmap b = croppedImage;
             Util.startBackgroundJob(this, null,
                     getResources().getString(R.string.savingImage),
                     new Runnable() {
                 public void run() {
-                    saveOutput();
+                    saveOutput(b);
                 }
             }, mHandler);
         }
     }
 
-    private void saveOutput() {
+    private void saveOutput(Bitmap croppedImage) {
         if (mSaveUri != null) {
             OutputStream outputStream = null;
             try {
                 outputStream = mContentResolver.openOutputStream(mSaveUri);
                 if (outputStream != null) {
-                    mCroppedImage.compress(mOutputFormat, 75, outputStream);
+                    croppedImage.compress(mOutputFormat, 75, outputStream);
                 }
             } catch (IOException ex) {
                 // TODO: report error to caller
@@ -360,7 +371,7 @@ public class CropImage extends MonitoredActivity {
                         newUri,
                         mContentResolver,
                         0, // TODO fix this orientation
-                        mCroppedImage,
+                        croppedImage,
                         null);
 
                 cancelable.get();
@@ -373,6 +384,7 @@ public class CropImage extends MonitoredActivity {
                 Log.e(TAG, "store image fail, continue anyway", ex);
             }
         }
+        croppedImage.recycle();
         finish();
     }
 
@@ -384,7 +396,9 @@ public class CropImage extends MonitoredActivity {
 
     @Override
     protected void onDestroy() {
-        mAllImages.deactivate();
+        if (mAllImages != null) {
+            mAllImages.deactivate();
+        }
         super.onDestroy();
     }
 
@@ -497,6 +511,11 @@ public class CropImage extends MonitoredActivity {
                         faceBitmap.getHeight(), mFaces.length);
                 mNumFaces = detector.findFaces(faceBitmap, mFaces);
             }
+
+            if (faceBitmap != null && faceBitmap != mBitmap) {
+                faceBitmap.recycle();
+            }
+
             mHandler.post(new Runnable() {
                 public void run() {
                     mWaitingToPick = mNumFaces > 1;
@@ -535,7 +554,7 @@ class CropImageView extends ImageViewTouchBase {
     protected void onLayout(boolean changed, int left, int top,
                             int right, int bottom) {
         super.onLayout(changed, left, top, right, bottom);
-        if (mBitmapDisplayed != null) {
+        if (mBitmapDisplayed.getBitmap() != null) {
             for (HighlightView hv : mHighlightViews) {
                 hv.mMatrix.set(getImageMatrix());
                 hv.invalidate();

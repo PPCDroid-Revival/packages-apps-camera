@@ -58,7 +58,6 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.Button;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -93,7 +92,7 @@ public class ImageGallery extends Activity implements
     private Uri mCropResultUri;
 
     // The index of the first picture in GridViewSpecial.
-    private int mSelectedIndex = GridViewSpecial.SELECT_NONE;
+    private int mSelectedIndex = GridViewSpecial.INDEX_NONE;
     private float mScrollPosition = INVALID_POSITION;
     private boolean mConfigurationChanged = false;
 
@@ -196,8 +195,12 @@ public class ImageGallery extends Activity implements
             if (!canHandleEvent()) return;
             stopCheckingThumbnails();
 
-            mGvs.stop();
             IImage currentImage = getCurrentImage();
+
+            // The selection will be cleared when mGvs.stop() is called, so
+            // we need to call getCurrentImage() before mGvs.stop().
+            mGvs.stop();
+
             if (currentImage != null) {
                 mAllImages.removeImage(currentImage);
             }
@@ -306,7 +309,8 @@ public class ImageGallery extends Activity implements
             Intent result = new Intent(null, img.fullSizeImageUri());
             if (myExtras != null && myExtras.getBoolean("return-data")) {
                 // The size of a transaction should be below 100K.
-                Bitmap bitmap = img.fullSizeBitmap(192);
+                Bitmap bitmap = img.fullSizeBitmap(
+                        IImage.UNCONSTRAINED, 100 * 1024);
                 if (bitmap != null) {
                     result.putExtra("data", bitmap);
                 }
@@ -616,30 +620,40 @@ public class ImageGallery extends Activity implements
         return imageList;
     }
 
-    public void onImageSelected(int index) {
-        mSelectedIndex = index;
+    private void toggleMultiSelected(IImage image) {
+        int original = mMultiSelected.size();
+        if (!mMultiSelected.add(image)) {
+            mMultiSelected.remove(image);
+        }
+        mGvs.invalidate();
+        if (original == 0) showFooter();
+        if (mMultiSelected.size() == 0) hideFooter();
     }
 
     public void onImageClicked(int index) {
-        if (index >= 0 && index < mAllImages.getCount()) {
-            IImage img = mAllImages.getImageAt(index);
-            if (img == null) {
-                return;
-            }
-            // if in multiselect mode
-            if (mMultiSelected != null) {
-                int original = mMultiSelected.size();
-                if (!mMultiSelected.add(img)) mMultiSelected.remove(img);
-                mGvs.invalidate();
-                if (original == 0) showFooter();
-                if (mMultiSelected.size() == 0) hideFooter();
-                return;
-            }
+        if (index < 0 || index >= mAllImages.getCount()) {
+            return;
+        }
+        mSelectedIndex = index;
+        mGvs.setSelectedIndex(index);
 
-            if (isPickIntent()) {
-                launchCropperOrFinish(img);
+        IImage image = mAllImages.getImageAt(index);
+
+        if (isInMultiSelectMode()) {
+            toggleMultiSelected(image);
+            return;
+        }
+
+        if (isPickIntent()) {
+            launchCropperOrFinish(image);
+        } else {
+            Intent intent;
+            if (image instanceof VideoObject) {
+                intent = new Intent(
+                        Intent.ACTION_VIEW, image.fullSizeImageUri());
+                intent.putExtra(MediaStore.EXTRA_SCREEN_ORIENTATION,
+                        ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
             } else {
-                Intent intent;
                 // FIXME - hacked so orientation is not forced to landscape
                 if (img instanceof VideoObject) {
                     intent = new Intent(
@@ -651,8 +665,25 @@ public class ImageGallery extends Activity implements
                     intent.putExtra(ViewImage.KEY_IMAGE_LIST, mAllImages);
                     intent.setData(img.fullSizeImageUri());
                 }
-                startActivity(intent);
             }
+            startActivity(intent);
+        }
+    }
+
+    public void onImageTapped(int index) {
+        // In the multiselect mode, once the finger finishes tapping, we hide
+        // the selection box by setting the selected index to none. However, if
+        // we use the dpad center key, we will keep the selected index in order
+        // to show the the selection box. We do this because we have the
+        // multiselect marker on the images to indicate which of them are selected,
+        // so we don't need the selection box, but in the dpad case we still
+        // need the selection box to show as a "cursor".
+
+        if (isInMultiSelectMode()) {
+            mGvs.setSelectedIndex(GridViewSpecial.INDEX_NONE);
+            toggleMultiSelected(mAllImages.getImageAt(index));
+        } else {
+            onImageClicked(index);
         }
     }
 
@@ -766,6 +797,7 @@ public class ImageGallery extends Activity implements
                                     return;
                                 }
                                 cb.run(getCurrentImageUri(), getCurrentImage());
+                                mGvs.invalidateImage(mGvs.getCurrentSelection());
                             }
                         });
                 if (r != null) {
@@ -788,7 +820,7 @@ public class ImageGallery extends Activity implements
                 mSelectedIndex = mAllImages.getImageIndex(image);
             }
         }
-        mGvs.select(mSelectedIndex, false);
+        mGvs.setSelectedIndex(mSelectedIndex);
         if (mScrollPosition == INVALID_POSITION) {
             if (mSortAscending) {
                 mGvs.scrollTo(0, mGvs.getHeight());
@@ -798,7 +830,7 @@ public class ImageGallery extends Activity implements
         } else if (mConfigurationChanged) {
             mConfigurationChanged = false;
             mGvs.scrollTo(mScrollPosition);
-            if (mGvs.getCurrentSelection() != GridViewSpecial.SELECT_NONE) {
+            if (mGvs.getCurrentSelection() != GridViewSpecial.INDEX_NONE) {
                 mGvs.scrollToVisible(mSelectedIndex);
             }
         } else {
@@ -891,7 +923,7 @@ public class ImageGallery extends Activity implements
     public boolean needsDecoration() {
         return (mMultiSelected != null);
     }
-    
+
     public void drawDecoration(Canvas canvas, IImage image,
             int xPos, int yPos, int w, int h) {
         if (mMultiSelected != null) {
@@ -1003,4 +1035,5 @@ public class ImageGallery extends Activity implements
         mMultiSelected = new HashSet<IImage>();
         mGvs.invalidate();
     }
+
 }
