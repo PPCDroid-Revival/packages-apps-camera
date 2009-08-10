@@ -655,15 +655,15 @@ public class ImageGallery extends Activity implements
                         ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
             } else {
                 // FIXME - hacked so orientation is not forced to landscape
-                if (img instanceof VideoObject) {
+                if (image instanceof VideoObject) {
                     intent = new Intent(
-                            Intent.ACTION_VIEW, img.fullSizeImageUri());
+                            Intent.ACTION_VIEW, image.fullSizeImageUri());
                     intent.putExtra(MediaStore.EXTRA_SCREEN_ORIENTATION,
                             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 } else {
                     intent = new Intent(this, ViewImage.class);
                     intent.putExtra(ViewImage.KEY_IMAGE_LIST, mAllImages);
-                    intent.setData(img.fullSizeImageUri());
+                    intent.setData(image.fullSizeImageUri());
                 }
             }
             startActivity(intent);
