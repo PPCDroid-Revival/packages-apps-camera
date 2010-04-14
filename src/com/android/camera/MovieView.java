@@ -48,17 +48,14 @@ public class MovieView extends Activity  {
                 }
             }
         };
-        //if (intent.hasExtra(MediaStore.EXTRA_SCREEN_ORIENTATION)) {
-        //    int orientation = intent.getIntExtra(
-        //            MediaStore.EXTRA_SCREEN_ORIENTATION,
-        //            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-        //    if (orientation != getRequestedOrientation()) {
-        //        setRequestedOrientation(orientation);
-        //    }
-        //}
-
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-
+        if (intent.hasExtra(MediaStore.EXTRA_SCREEN_ORIENTATION)) {
+            int orientation = intent.getIntExtra(
+                    MediaStore.EXTRA_SCREEN_ORIENTATION,
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+            if (orientation != getRequestedOrientation()) {
+                setRequestedOrientation(orientation);
+            }
+        }
         mFinishOnCompletion = intent.getBooleanExtra(
                 MediaStore.EXTRA_FINISH_ON_COMPLETION, true);
     }
